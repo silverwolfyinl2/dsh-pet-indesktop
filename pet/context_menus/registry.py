@@ -21,6 +21,8 @@ from ..weather.menu import (
 from .fun_entry import add_ojingjing_entry
 from .icons import custom_file_menu_icon, vector_menu_icon
 from .quick_launch import add_quick_launch_menu, configured_quick_apps
+from .game_assistant import add_game_assistant_menu  # 本机追加
+from .ext_market import add_ext_market_menu          # 本机追加（2026-10-27 扩展市场）
 from .shared import (
     MUSIC_ALIGN_DISABLED_REASON,
     NETWORK_INFO_DISABLED_REASON,
@@ -86,6 +88,10 @@ ACTION_LABELS = {
     "agent_cost": "显示本轮消费",
     "quick_launch": "快捷启动", "balance": "DeepSeek 余额",
     "memory_trim": "回收内存",
+    "game_assistant": "游戏助理",
+    "ext_market": "扩展市场",
+    "ga_ai_ops": "AI 操作", "ga_ai_advice": "AI 建议",
+    "ga_ai_laptop": "AI 操作笔记本", "ga_ai_record": "AI 记录", "ga_voice": "语音播报",
     "harness": "启动 DeepSeek Harness", "deepseek_web": "打开网页版 DeepSeek",
     "check_update": "检查更新", "github_project": "GitHub 项目页",
     "quark_download": "夸克网盘下载", "agent_link": "Agent 联动",
@@ -117,6 +123,9 @@ ACTION_ICONS = {
     "music_open_soda": "play", "music_lyric_align": "play",
     "quick_launch": "application", "balance": "balance", "harness": "harness",
     "memory_trim": "clear",
+    "game_assistant": "automation", "ext_market": "web", "ga_ai_ops": "interaction", "ga_ai_advice": "chat",
+    "learn_mouse": "screen",
+    "ga_ai_laptop": "application", "ga_ai_record": "screen", "ga_voice": "chat",
     "deepseek_web": "web", "check_update": "update", "github_project": "web",
     "quark_download": "download", "agent_link": "automation",
     "proactive_screen": "screen", "todo_panel": "todo",
@@ -368,6 +377,8 @@ class MenuActionRegistry:
             "check_update": MenuActionSpec(_build_check_update, _callback_available("on_check_update")),
             "github_project": MenuActionSpec(_build_github),
             "quark_download": MenuActionSpec(_build_quark, lambda _pet: sys.platform == "win32"),
+            "game_assistant": MenuActionSpec(add_game_assistant_menu),
+            "ext_market": MenuActionSpec(add_ext_market_menu),
             "agent_link": MenuActionSpec(add_agent_link_menu),
             "proactive_screen": MenuActionSpec(
                 add_proactive_menu,

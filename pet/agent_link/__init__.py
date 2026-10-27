@@ -57,6 +57,9 @@ from .dsh_state import (
 from ..model_access_tracker import ModelAccessTracker
 from ..node_runtime import augmented_path as _augmented_path
 from ..node_runtime import global_node_modules_roots
+# 本机追加（2026-10-15）：任务回执气泡。上游 v4.4.0 删掉了 pet/report_gates.py，
+# 我们的 should_report_event 门控随之失效（该模块上游已无，不做无源引用）。
+from .. import companion_feedback as companion_feedback_mod
 
 from ..persona_phrases import PhrasePicker
 from ..persona_template import CONDITIONAL_PARAMETERS, LEGACY_HIDDEN_PARAMETERS
@@ -1628,19 +1631,68 @@ class AgentEvent:
     owner: str = ""
 
 
+def external_bubble_duration_ms(text: str) -> int:
+    """外部台词气泡的停留时长（2026-10-27 秋殇要求：气泡太短，语音念完就没了）。
+
+    原实现写死 4500ms —— 二十几字的台词，语音还没念完气泡先消失。
+    现在按字数缩放：底 6s + 每字 220ms，夹在 [6s, 20s]（长句读得完、短句也不闪没）。
+    `PET_EXTERNAL_BUBBLE_MS` 设了就固定用它（便于实测与回归，不用改代码）。
+    """
+    override = str(os.environ.get("PET_EXTERNAL_BUBBLE_MS", "") or "").strip()
+    if override.isdigit() and int(override) > 0:
+        return int(override)
+    n = len(str(text or ""))
+    return int(max(6000, min(20000, 6000 + 220 * n)))
+
+
+def _external_bubble_enabled() -> bool:
+    """★ 2026-10-15（裁决 A）：外部气泡**默认关**，只在我方启动器里显式开（PET_EXTERNAL_BUBBLE=1）。
+
+    关闭时不仅要"不显示"，还要让**已排队的重试自行作废**（避免重开后显示过期文本）。
+    """
+    import os as _os
+    import tempfile as _tempfile
+    from pathlib import Path as _Path
+    if _os.environ.get("PET_EXTERNAL_BUBBLE", "0").strip().lower() not in ("1", "true", "on", "yes"):
+        return False
+    # 运行期关闭门（裁决要求"运行中关闭可验证"）：存在该标记文件 ⇒ 立即视为关闭，**无需重启**
+    flag = _os.environ.get("PET_EXTERNAL_BUBBLE_FLAG") or str(_Path(_tempfile.gettempdir()) / "dsh-pet-external-bubble.off")
+    return not _Path(flag).exists()
+
+
+def external_bubble_policy(*, visible: bool, alert_active: bool, sticky: bool,
+                           busy: bool, retries_left: int, important: bool = False) -> str:
+    """★ 2026-10-15：外部（我方）气泡放行策略 —— 纯函数，便于单测与复核。
+
+    返回：
+      'island' —— 窗口隐藏：改道灵动岛反馈面（可验；岛不可用时调用方记 drop）
+      'defer'  —— 此刻被重要提醒/sticky/占位窗口挡住：**排队等**（有界），**绝不抢占**
+      'drop'   —— 等过 retries_left 次仍被挡：放弃并**记原因**（不静默）
+      'show'   —— 可以直接显示
+    不变量：`alert_active`（审批/问题/失败/卡住等提醒队列）**永远优先**，本函数任何分支都不会覆盖它。
+    """
+    if not visible:
+        return "island"
+    if alert_active:
+        return "defer" if retries_left > 0 else "drop"
+    if sticky and not important:
+        return "defer" if retries_left > 0 else "drop"
+    if busy:
+        return "defer" if retries_left > 0 else "drop"
+    return "show"
+
+
 class BaseAgentMonitor(QObject):
     """Agent 监视器抽象基类。"""
 
-    #: 摄入去重账本的容量与 TTL（G2）。512 条实测 ≈ 126 KB（tracemalloc，键是 5 元
-    #: 短字符串）；单条记录的新增成本实测 ≈ 1.5 µs（身份 1.1–1.3 µs + 账本 0.4 µs），
-    #: 相对于本拍 tail 的 stat+read 可忽略。TTL 900s 远大于所有呈现节流窗口
-    #: （音效冷却默认 2s、完成确认 800ms、过程汇报同文案 60s），因此"跨冷却的重复
-    #: 投递"仍在账本内被拒；超过 TTL 的重复（或长会话里被 FIFO 挤出的条目，即最近
-    #: 512 条记录之外）可能重放——这是有界账本的诚实边界，不承诺更强保证。
     _EVENT_LEDGER_MAX = 512
     _EVENT_LEDGER_TTL_S = 900.0
 
     state_changed = Signal(str, str)  # (agent_key, state)
+    # ★ 2026-10-15（秋殇定调）：慢通道点名动作 —— (agent_key, 动作名)，由持窗口的管理器执行
+    scene_action = Signal(str, str)
+    # ★ 2026-10-15：外部气泡文本 (agent_key, text) —— 由持窗口的管理器按策略放行
+    scene_bubble = Signal(str, str)  # (agent_key, text)
     activity = Signal(str, str)       # (agent_key, 工具名) —— 过程汇报用，仅事件带工具名时发
     # Worker 事件载荷：保留上面的旧信号作为测试/外部兼容 API，管理器使用
     # 带代次的事件信号做接收端校验。
@@ -1655,6 +1707,7 @@ class BaseAgentMonitor(QObject):
     # 原始桥接记录转发（供对话上下文记忆 / 交互生命周期兜底等消费）：(agent_key, record)
     # 只挂 DSH 监视器；其他 Agent（claude/cursor/…）不产生这类增强记录。
     raw_record = Signal(str, object)
+    task_receipt = Signal(str, object, int)
     # Unified protocol output; legacy signals below remain the compatibility API.
     normalized_event = Signal(object)
     # 硬失败（execution/failed）：DSH 已决定本轮不再继续，不经行为分析直接提醒
@@ -2051,6 +2104,15 @@ class BaseAgentMonitor(QObject):
                     continue
                 ev = str(data.get("event", ""))
                 st = str(data.get("state", ""))
+                # ★ 2026-10-15（秋殇定调）：**慢通道点名动作** —— 事件带 action 就播那一个，
+                #   不参与空闲随机链；与卡住/失败/忙/吃文件/报时那批"事件驱动入口"同款机制。
+                #   名字非法时 play_scene_action 返回 False（不抛、不改当前动画）。
+                _act = str(data.get("action", "") or "").strip()
+                if _act:
+                    self.scene_action.emit(self.agent_key, _act)
+                _bub = str(data.get("text", "") or "").strip()
+                if _bub and bool(data.get("bubble")):
+                    self.scene_bubble.emit(self.agent_key, _bub)
                 tool = str(data.get("tool", "") or "").strip()
                 # Unified event path is additive and intentionally guarded.
                 try:
@@ -2071,6 +2133,8 @@ class BaseAgentMonitor(QObject):
                 self._emit(self.raw_record, (self.agent_key, data))
                 # 单读方第二消费者：同一份解析记录喂状态收敛器（仅 DshMonitor 实装）
                 self._on_parsed_record(data, cursor)
+                if self.agent_key == "game-copilot" and ev == "companion/task":
+                    self._emit(self.task_receipt, (self.agent_key, data, emit_gen))
                 # 审批请求提醒：一次性事件，收到即发信号（不进入状态机，
                 # 因为 DSH 等审批时 agent 仍在 running，状态还是 working）。
                 # 只收桥接后的 UI 事件 approval/request 与兼容旧名
@@ -3376,9 +3440,15 @@ class AgentLinkManager(QObject):
 
         for mon in self.monitors.values():
             mon.raw_record.connect(self._remember_dialogue_record)
+            mon.task_receipt.connect(self._on_task_receipt)
             mon.normalized_event.connect(self._on_normalized_event)
             mon.state_event.connect(self._on_agent_state_event)
             mon.activity_event.connect(self._on_agent_activity_event)
+        try:
+            mon.scene_action.connect(self._on_scene_action)
+            mon.scene_bubble.connect(self._on_scene_bubble)
+        except Exception:                                                              # noqa: BLE001
+            log.debug("scene_action 信号连接失败", exc_info=True)
             mon.approval_requested.connect(self._on_approval_request)
             mon.approval_resolved.connect(self._on_approval_resolved)
             mon.question_requested.connect(self._on_question_request)
@@ -3421,6 +3491,111 @@ class AgentLinkManager(QObject):
             self.win.set_link_next_provider(self._next_busy_anim)
 
         self.apply_config()
+
+    _EXTERNAL_BUBBLE_TRIES = 4          # 有界排队：最多等 4 次
+    _EXTERNAL_BUBBLE_DELAY_MS = 2500    # 每次等待间隔（与她既有重要气泡重试同量级）
+
+    def _on_scene_bubble(self, agent_key: str, text: str) -> None:
+        """★ 2026-10-15：显示**我方文本**的气泡 —— 不抢占重要提醒、排队有上限、隐藏走灵动岛。
+
+        每个分支都记 `[BUBBLE]` 日志（shown / island / deferred / dropped+原因）⇒ 可在实机上机器判定。
+        """
+        if not getattr(self.win, "show_bubble", None):
+            log.info("[BUBBLE] dropped reason=no-show_bubble")
+            return
+        if not _external_bubble_enabled():
+            self._scene_bubble_cancel("disabled")      # 真停表（不只是"到点不执行"）
+            log.info("[BUBBLE] dropped reason=disabled")
+            return
+        self._scene_bubble_try(agent_key, text, self._EXTERNAL_BUBBLE_TRIES)
+
+    def _scene_bubble_fire(self) -> None:
+        """定时器到点：取出等待项继续（等待项为空说明已被取消 ⇒ 什么都不做）。"""
+        pend = getattr(self, "_scene_bubble_pending", None)
+        self._scene_bubble_pending = None
+        if not pend:
+            return
+        agent_key, text, retries_left = pend
+        if retries_left <= 0:
+            log.info("[BUBBLE] dropped reason=queue-exhausted agent=%s", agent_key)
+            return
+        self._scene_bubble_try(agent_key, text, retries_left)
+
+    def _scene_bubble_cancel(self, reason: str) -> None:
+        """**真取消**：停表 + 清等待项（区别于"到点才发现被关"）。"""
+        timer = getattr(self, "_scene_bubble_timer", None)
+        had = bool(getattr(self, "_scene_bubble_pending", None)) or bool(timer is not None and timer.isActive())
+        if timer is not None and timer.isActive():
+            timer.stop()
+        self._scene_bubble_pending = None
+        if had:
+            log.info("[BUBBLE] queue-cancelled reason=%s", reason)
+
+    def _scene_bubble_try(self, agent_key: str, text: str, retries_left: int) -> None:
+        if not _external_bubble_enabled():
+            # 兜底：若仍被调用（例如到点瞬间开关被翻），同样真取消，不留过期文案
+            self._scene_bubble_cancel("disabled-at-fire")
+            log.info("[BUBBLE] dropped reason=disabled")
+            return
+        win = getattr(self, "win", None)
+        visible = True
+        is_visible = getattr(win, "isVisible", None)
+        if callable(is_visible):
+            try:
+                visible = bool(is_visible())
+            except Exception:                                                              # noqa: BLE001
+                visible = True
+        alert_active = bool(getattr(win, "_alert_current", None) or
+                            getattr(win, "_alert_queue", None))
+        sticky = bool(getattr(win, "_sticky_bubble_active", False))
+        busy = time.monotonic() < getattr(win, "_bubble_busy_until", 0.0)
+        verdict = external_bubble_policy(visible=visible, alert_active=alert_active,
+                                         sticky=sticky, busy=busy, retries_left=retries_left)
+        if verdict == "show":
+            try:
+                win.show_bubble(text, duration_ms=external_bubble_duration_ms(text))
+                log.info("[BUBBLE] shown agent=%s len=%d", agent_key, len(text))
+            except Exception:                                                              # noqa: BLE001
+                log.info("[BUBBLE] dropped reason=show_bubble-error")
+            return
+        if verdict == "island":
+            ok = False
+            try:
+                from . import window_alerts as _window_alerts
+                ok = bool(_window_alerts.redirect_hidden_bubble(win, text, duration_ms=external_bubble_duration_ms(text)))
+            except Exception:                                                              # noqa: BLE001
+                ok = False
+            log.info("[BUBBLE] island agent=%s ok=%s%s", agent_key, ok,
+                     "" if ok else "（岛不可用 ⇒ 丢弃，不静默）")
+            return
+        if verdict == "defer":
+            log.info("[BUBBLE] deferred agent=%s retries_left=%d", agent_key, retries_left)
+            # 用**自有** QTimer（不是 singleShot）：这样才能在关闭时**真停表**
+            self._scene_bubble_pending = (agent_key, text, retries_left - 1)
+            timer = getattr(self, "_scene_bubble_timer", None)
+            if timer is None:
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                timer.timeout.connect(self._scene_bubble_fire)
+                self._scene_bubble_timer = timer
+            timer.start(self._EXTERNAL_BUBBLE_DELAY_MS)
+            return
+        log.info("[BUBBLE] dropped reason=%s agent=%s retries_left=0",
+                 "alert-active" if alert_active else ("sticky" if sticky else "busy"), agent_key)
+
+    def _on_scene_action(self, agent_key: str, name: str) -> None:
+        """★ 2026-10-15：执行**慢通道点名**的动作（监视器线程发信号 → 这里在主线程调窗口）。
+
+        监视器（worker 线程）没有 `self.win` 引用，动作必须由持有窗口的这里执行；
+        名字非法时 `play_scene_action` 返回 False 且不改当前动画。
+        """
+        ok = False
+        try:
+            ok = bool(self.win.play_scene_action(name))
+        except Exception:                                                                  # noqa: BLE001
+            log.debug("play_scene_action 失败：%r", name, exc_info=True)
+        log.info("[SCENE] agent=%s action=%r 已播=%s anim=%s",
+                 agent_key, name, ok, getattr(self.win, "anim", "?"))
 
     def _on_normalized_event(self, event) -> None:
         """Consume semantic events for streak tracking and interaction cleanup."""
@@ -4414,9 +4589,22 @@ class AgentLinkManager(QObject):
     # 各 Agent 的默认 thinking 文案；DSH 用角色梗，其他用烧烤梗
     _THINKING_DEFAULTS = {"dsh": "大肥鱼正在深度思考……"}
 
+    def _on_task_receipt(self, agent_key: str, record: object, gen: int) -> None:
+        mon = self.monitors.get(agent_key)
+        if (agent_key != "game-copilot" or getattr(self, "_shutdown", False)
+                or mon is None or not mon._running or getattr(mon, "_paused", False)
+                or not self._gen_current(agent_key, gen)):
+            return
+        try:
+            companion_feedback_mod.handle_receipt(self, record)
+        except Exception:
+            log.debug("游戏任务回执呈现失败", exc_info=True)
+
     def _remember_dialogue_record(self, agent_key: str, record: object) -> None:
         """Expose the latest upstream record to phrase templates."""
         if not isinstance(record, dict):
+            return
+        if agent_key == "game-copilot" and record.get("event") == "companion/task":
             return
         context = dict(record)
         context.setdefault("agent_key", agent_key)
@@ -5497,7 +5685,7 @@ class AgentLinkManager(QObject):
             # 路径语义：防 _busy 永久滞留，下次开始干活被误判成"并发"）。
             from .. import window_alerts as _window_alerts
 
-            _window_alerts.redirect_hidden_bubble(self.win, text, duration_ms=4500)
+            _window_alerts.redirect_hidden_bubble(self.win, text, duration_ms=external_bubble_duration_ms(text))
             self._cost.abort(agent_key)
             return
         # 恢复待机动画：Claude 回合结束没有 idle 事件，不靠这步会一直停在干活动作。

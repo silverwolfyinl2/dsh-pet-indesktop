@@ -29,6 +29,7 @@ def test_modern_default_v1_has_compact_root_and_safety_actions():
         "tools_help",
         "agent_link",
         "proactive_screen",
+        "ext_market",  # 2026-10-27 本机加的（模板 extr_market 节点/已注册动作）
         "todo_panel",
         "quiet_mode",
         "memory_trim",
@@ -346,6 +347,7 @@ def test_missing_user_layout_resolves_versioned_default():
         "quark_download",
         "agent_link",
         "proactive_screen",
+        "ext_market",  # 2026-10-27 本机加的（模板 extr_market 节点/已注册动作）
         "todo_panel",
         "quiet_mode",
         "memory_trim",
@@ -383,6 +385,7 @@ def test_missing_user_layout_resolves_versioned_default():
         "tools_help",
         "agent_link",
         "proactive_screen",
+        "ext_market",  # 2026-10-27 本机加的（模板 extr_market 节点/已注册动作）
         "todo_panel",
         "quiet_mode",
         "memory_trim",
@@ -554,6 +557,8 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
     ]
     if sys.platform == "win32":
         expected_root.insert(-2, "主动识屏")
+    expected_root.insert(-2, "扩展市场")          # 2026-10-27 本机加的（平台无关）
+    if sys.platform == "win32":
         expected_root.insert(-2, "待办提醒")
         expected_root.insert(-2, "免打扰")
         expected_root.insert(-2, "回收内存")
@@ -576,7 +581,8 @@ def test_default_layout_populates_real_qmenu_hierarchy(monkeypatch):
     ]
     if sys.platform == "win32":
         expected_rendered.insert(-3, "主动识屏")
-    # tools 段顺序：… Agent 联动 [主动识屏] 待办提醒 免打扰 [回收内存] 查看天气 天气城市 抽支签 | 桌宠设置 退出
+    expected_rendered.insert(-3, "扩展市场")      # 2026-10-27 本机加的（平台无关）
+    # tools 段顺序：… Agent 联动 [主动识屏] [扩展市场] 待办提醒 免打扰 [回收内存] 查看天气 天气城市 抽支签 | 桌宠设置 退出
     # （报时/节日四项默认 visible: false，不渲染；回收内存仅在 Windows 出现）
     expected_rendered.insert(-3, "待办提醒")
     expected_rendered.insert(-3, "免打扰")
