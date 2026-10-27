@@ -21,8 +21,6 @@ from ..weather.menu import (
 from .fun_entry import add_ojingjing_entry
 from .icons import custom_file_menu_icon, vector_menu_icon
 from .quick_launch import add_quick_launch_menu, configured_quick_apps
-from .game_assistant import add_game_assistant_menu  # 本机追加
-from .ext_market import add_ext_market_menu          # 本机追加（2026-10-27 扩展市场）
 from .shared import (
     MUSIC_ALIGN_DISABLED_REASON,
     NETWORK_INFO_DISABLED_REASON,
@@ -377,8 +375,6 @@ class MenuActionRegistry:
             "check_update": MenuActionSpec(_build_check_update, _callback_available("on_check_update")),
             "github_project": MenuActionSpec(_build_github),
             "quark_download": MenuActionSpec(_build_quark, lambda _pet: sys.platform == "win32"),
-            "game_assistant": MenuActionSpec(add_game_assistant_menu),
-            "ext_market": MenuActionSpec(add_ext_market_menu),
             "agent_link": MenuActionSpec(add_agent_link_menu),
             "proactive_screen": MenuActionSpec(
                 add_proactive_menu,
@@ -537,3 +533,18 @@ class MenuActionRegistry:
 
 
 MENU_ACTIONS = MenuActionRegistry()
+
+
+# ── 本机扩展菜单（**唯一侵入点**，2026-10-27）────────────────────────────────
+# 条目在 pet/context_menus/_local_menus.py：加菜单改那里，不动本文件的三张表。
+# 上游升级时冲突只会落在这几行（全在文件末尾），解起来最快。
+try:
+    from ._local_menus import install_local_menus as _install_local_menus
+
+    _install_local_menus(ACTION_LABELS, ACTION_ICONS, MENU_ACTIONS._specs, MenuActionSpec)
+except Exception as _local_menu_exc:                     # noqa: BLE001
+    import logging as _logging
+
+    _logging.getLogger("pet.menu").warning(
+        "本机扩展菜单未加载（桌宠可启动，但菜单会少几项）：%s", _local_menu_exc
+    )
