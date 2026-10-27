@@ -251,6 +251,72 @@ def _reset_session_ending_for_tests() -> None:
     _SESSION_ENDING = False
 
 
+# ------------------------------------------------------------ spawn 失败退避（2026-10-02 本机加固）
+# 现象（本机 pet-6744.log，2026-10-02 20:57:29→20:57:39）：会话结束/关机窗口里，
+# 消费端以 ~24Hz 反复起 reader，每次 spawn 都失败（关机期 CreateProcess 出来的
+# ffmpeg 起不来 → imageio 报 `Could not load meta information`），10 秒刷 **230 条
+# ERROR + traceback**。素材本身没问题（用自带 ffmpeg 探过：EBML 头合法、vp9+alpha、
+# 10.04s）。刷屏既浪费又淹没真问题，且日志闸门日志还落在爆发之后。
+#
+# 做法：按 path 记「连续失败次数」（用于**日志节流**，不是拦截 spawn —— 拦截会改变
+# reader 契约、牵动上游清理用例）。日志只在第 1 次与每 _SPAWN_LOG_EVERY 次失败时出
+# ERROR，其余降为 DEBUG；**会话结束窗口内一律 INFO**（那是预期内的失败）。
+# 成功一次即清零。spawn_backoff_delay/allow/remaining 三个函数为日志节流与
+# 将来的 spawn 拦截预留（allow 现在恒真，除非测试显式使用）。
+_SPAWN_BACKOFF_BASE_S = 0.5
+_SPAWN_BACKOFF_MAX_S = 8.0
+_SPAWN_LOG_EVERY = 5
+_SPAWN_FAILS: "dict[str, list]" = {}      # path -> [连续失败数, 下次允许的 monotonic 时刻]
+_SPAWN_FAILS_LOCK = threading.Lock()
+
+
+def spawn_backoff_delay(fails: int) -> float:
+    """第 fails 次连续失败后的退避时长（秒，指数 + 封顶）。"""
+    n = max(1, int(fails))
+    return min(_SPAWN_BACKOFF_MAX_S, _SPAWN_BACKOFF_BASE_S * (2 ** (n - 1)))
+
+
+def spawn_backoff_allow(path) -> bool:
+    """现在允许为这个 path 起 reader 吗？（退避窗口内 → False）"""
+    key = str(path)
+    with _SPAWN_FAILS_LOCK:
+        rec = _SPAWN_FAILS.get(key)
+        if not rec:
+            return True
+        return time.monotonic() >= rec[1]
+
+
+def spawn_backoff_note(path, ok: bool) -> int:
+    """记一次 spawn 结果，返回该 path 的连续失败次数（成功时清零并返回 0）。"""
+    key = str(path)
+    with _SPAWN_FAILS_LOCK:
+        if ok:
+            _SPAWN_FAILS.pop(key, None)
+            return 0
+        rec = _SPAWN_FAILS.get(key) or [0, 0.0]
+        rec[0] = int(rec[0]) + 1
+        rec[1] = time.monotonic() + spawn_backoff_delay(rec[0])
+        _SPAWN_FAILS[key] = rec
+        return rec[0]
+
+
+def spawn_backoff_remaining(path) -> float:
+    """这个 path 还要等多久（秒；不在退避中返回 0）。"""
+    key = str(path)
+    with _SPAWN_FAILS_LOCK:
+        rec = _SPAWN_FAILS.get(key)
+        if not rec:
+            return 0.0
+        return max(0.0, rec[1] - time.monotonic())
+
+
+def _reset_spawn_backoff_for_tests() -> None:
+    """仅测试用：清空退避表（否则会串到后续用例）。"""
+    with _SPAWN_FAILS_LOCK:
+        _SPAWN_FAILS.clear()
+
+
+
 def _ensure_ffmpeg_exe() -> None:
     """串行化首次 ffmpeg exe 探测并预热缓存（幂等，任意线程可调用）。
 
@@ -2170,6 +2236,7 @@ class WebMClip(QObject):
             if stop_evt.is_set() or self._generation != generation:
                 return
             # 用实际流信息修正元数据
+            spawn_backoff_note(self.path, True)   # 这次 spawn 成了 → 清掉退避计数
             if meta.get('fps'):
                 self._fps = float(meta['fps'])
             if meta.get('duration'):
@@ -2213,7 +2280,17 @@ class WebMClip(QObject):
         except Exception as exc:
             if self._generation != generation or stop_evt.is_set():
                 return
-            logger.exception('webm 解码失败: %s', self.path)
+            fails = spawn_backoff_note(self.path, False)   # 记失败 → 下次先退避再试
+            if session_ending():
+                # 会话结束窗口：spawn 被系统拒绝属于**预期内**（issue #111 的同源现象），
+                # 降级成 INFO —— 以前这里每次都 logger.exception，实测 10 秒刷 230 条。
+                logger.info('会话结束中，ffmpeg spawn 失败（连续第 %d 次，退避 %.1fs 后再试）: %s',
+                            fails, spawn_backoff_delay(fails), self.path)
+            elif fails <= 1 or fails % _SPAWN_LOG_EVERY == 0:
+                logger.exception('webm 解码失败（连续第 %d 次，退避 %.1fs）: %s',
+                                 fails, spawn_backoff_delay(fails), self.path)
+            else:
+                logger.debug('webm 解码失败（连续第 %d 次，退避中静默）: %s', fails, self.path)
             self.errorOccurred.emit(str(exc))
             # 异常中断也要放入结束标记，避免动画链卡在最后一帧（同样有界）。
             self._put_end_marker(q, stop_evt, generation)

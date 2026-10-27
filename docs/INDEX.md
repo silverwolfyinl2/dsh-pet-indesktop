@@ -131,6 +131,7 @@
 
 | 文档 | 一句话内容 | 何时必读 |
 |---|---|---|
+| [PR-REPORT-桌宠情景驱动动作-20261015.md](PR-REPORT-桌宠情景驱动动作-20261015.md) | 情景点名动作：ction 字段 + 空闲只待机（默认关、PET_SCENE_DRIVEN_ANIM=1 开）；含三份交付证据与"默认开打红既有测试"的对照。 | **想复用/扩展事件协议、或改动画选择时** |
 | [`PR-REPORT-ISLAND-HIDDEN-CHAT-DEADLOCK-2026-09-23.md`](PR-REPORT-ISLAND-HIDDEN-CHAT-DEADLOCK-2026-09-23.md) | 纯桌宠版岛隐藏死锁修复：无聊天构建 hidden_chat 单击路由回退展开卡片（岛能力开关 + 设置页开关按构建变体隐藏）。 | 改灵动岛单击路由 / hidden_chat 设置 / 打包变体（无 pet.chat）行为时。 |
 | [`PR-REPORT-TEMPLATE.md`](PR-REPORT-TEMPLATE.md) | PR 报告模板：三份交付证据（修改文件说明 / 性能分析 / 实机运行记录）的逐节骨架与判定标准。 | **开新 PR 写报告前必读并整份复制**；2026-09-22 起三份证据是硬要求（`AGENTS.md` Delivery evidence discipline），由 `tests/test_pr_report_discipline.py` 机器化校验。 |
 | [`PR-REPORT-PR76-2026-09-10.md`](PR-REPORT-PR76-2026-09-10.md) | PR76 批次的完整报告：事件汇报概率门 + Persona 模板升级 + 全链路错误语义统一（46 文件，+3004/−917）。 | 追溯 PR76 批次改了什么、以及概率门/persona 模板/错误语义三条线的组合动机时。 |
@@ -149,6 +150,7 @@
 | [`PR-REPORT-PERF-ISLAND-CONSOLIDATED-2026-09-23.md`](PR-REPORT-PERF-ISLAND-CONSOLIDATED-2026-09-23.md) | 流畅度/解码减负 + 岛远端硬墙 + 音效缓存 + 设置收口的 PR 报告：走路帧间补点（位置交付 28.6Hz→~160Hz）、碰撞 >50ms 卡顿 133→3、子宠进程补挂远端硬墙、零拷贝消融的诚实记录（崩溃案机理=绘制重入，未结案）。 | 改 `movement.move_anim_tick`/走路位移、webm 冷路径/首帧缓存/meta 后台化、岛碰撞远端模式与静态成员发布、音效候选缓存、或「多开」设置项时；排查 Qt6Gui 绘制重入崩溃时也要读（含消融对比与取证指针）。 |
 | [`PR-REPORT-ONLINE-UPDATE-2026-09-24.md`](PR-REPORT-ONLINE-UPDATE-2026-09-24.md) | 在线更新 PR 报告：多源 manifest、镜像回退、大小/SHA-256 校验、Windows Inno Setup 自动安装、设置页与版本显示。 | 改 `pet/updater.py`、更新设置页、发布 manifest 或安装器重启行为时。 |
 | [`PR-REPORT-ISSUE-186-TRAY-MENU-2026-09-23.md`](PR-REPORT-ISSUE-186-TRAY-MENU-2026-09-23.md) | 发布后补丁报告（三个独立提交）：① issue #186 多显示器跨屏拖拽/抛掷恢复——#137 把落位统一钳进本屏，改成「一次交互一个多屏活动区域快照」（`DesktopArea` + `band_bounds` 防错位空洞）；② 托盘图标消失——首帧不再同步解码后 `icon_pixmap()` 为空，占位图标 + `frame_ready` 换角色头像；③ 右键菜单「鼠标穿透」去重（设置页 + 托盘保留）。 | 改窗口落位/钳制/抛掷边界（`pet/window_placement.py`、`_interaction_area` 快照生命周期）时；改托盘图标/`_build_tray` 时；或再遇「托盘图标不见了」「桌宠拖不到副屏」这类反馈时（含单屏不可复现的探针口径）。 |
+| [`PR-REPORT-G7-SLOW-CHANNEL-MENU-ENTRY-2026-10-15.md`](PR-REPORT-G7-SLOW-CHANNEL-MENU-ENTRY-2026-10-15.md) | 「游戏助理」命令区**第一层**新增「交给慢通道（跑全）」入口：与老入口「幻唐志 ▶ 跑修炼任务 ▶ 0 全部角色」**同一 args**（同账本/同闸门/同终态），解决秋殇"菜单里找不到『交给慢通道』这个词"。含 N=300 菜单构建实测（median 2861.6→2829.0 µs；第一层动作 17→18）与全量 3 条既有失败的归属对照。 | 改/删这个菜单入口、再调「幻唐志 ▶ 跑修炼任务」层级或菜单文案时；或想知道"为什么菜单里有两个入口"时。 |
 
 ---
 

@@ -22,6 +22,7 @@ import math
 import random
 import sys
 import threading
+from . import companion_feedback as companion_feedback_mod
 import time as _stdlib_time
 from types import SimpleNamespace
 from pathlib import Path
@@ -415,6 +416,11 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         self.clicks = self.cats['clicks']
         self.drag = self.cats['drag']
         self.acts = self.cats['acts']
+        # ★ 2026-10-15（秋殇定调）：情景驱动动画 —— **空闲只待机、动作由慢通道按情景点名**，
+        #   不再按 30/10/40/20 随机播。
+        #   **默认关**（保持既有行为与既有测试不变）；本机用法显式开：PET_SCENE_DRIVEN_ANIM=1。
+        self.scene_driven_anim = os.environ.get(
+            'PET_SCENE_DRIVEN_ANIM', '0').strip().lower() in ('1', 'true', 'on', 'yes')
 
         # 批10-A1 预测式预热（控制器在 predictive_prewarm.py）；提前量默认 350ms，可配 200-600。
         self.predict_prewarm_lead_ms = max(200, min(600, int(config.get('predict_prewarm_lead_ms', 350))))
@@ -2720,6 +2726,12 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         「不移动」模式下跳过移动分支，其概率并入动作。批10-A1：先尝试消费预测
         （context_anim 一致且代次未变，不符即弃），概率逻辑与预测共用 _roll_next。
         """
+        # ★ 2026-10-15（秋殇定调）：情景驱动模式下**不做空闲随机掷骰** —— 只回待机；
+        #   要播某个动作由慢通道点名（play_scene_action）。事件驱动的入口（卡住/失败/忙/吃文件/报时）不受影响。
+        if getattr(self, 'scene_driven_anim', True):
+            if self.idles:
+                self._switch(self._pick(self.idles, exclude=self.anim))
+            return
         if not self.acts:
             # 没有随机动作素材（仅核心动画）：需要 acts 的分支与回退统一走待机。
             if self.idles:
@@ -2739,6 +2751,29 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         name = self._roll_next(self.anim)
         if name is not None:
             self._play_roll(name)
+
+    def play_scene_action(self, name: str) -> bool:
+        """★ 2026-10-15：按**慢通道给定**的动作名播一个动作（情景驱动），播完由既有逻辑回待机。
+
+        与卡住/失败/忙/吃文件/报时那批"事件驱动入口"同一种机制：白名单 = idles|turns|acts|moves
+        （真源 catalog.ANIM_FILES）。名字不合法或池为空 ⇒ 返回 False（**不静默**，由调用方记日志）。
+        """
+        n = str(name or '').strip()
+        if not n:
+            return False
+        pool = set(self.idles) | set(self.turns) | set(self.acts) | set(self.moves)
+        if n not in pool:
+            logging.info("[SCENE] 拒绝 action=%r（不在池中）", n)
+            return False
+        if n in self.moves:
+            if getattr(self, 'no_move', False) or not self._try_move(n):
+                if self.acts:
+                    self._switch(self._pick(self.acts, exclude=self.anim))
+            logging.info("[SCENE] action=%r 走移动分支 anim=%s", n, getattr(self, 'anim', '?'))
+            return True
+        ok = bool(self._switch(n))
+        logging.info("[SCENE] action=%r 已播=%s anim=%s", n, ok, getattr(self, 'anim', '?'))
+        return ok
 
     def _play_roll(self, name: str) -> None:
         """执行掷骰结果：移动名走 _try_move（失败/不移动回退动作池）；待机/转向按
@@ -3307,6 +3342,7 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
             # 多屏：拖拽期间允许越屏（一次交互取一次快照，物理 tick 里只读它）
             self._interaction_area = window_placement.desktop_area()
             self._effects_on_drag_started()
+            companion_feedback_mod.show_touch(self, "drag")
             self._submit_collision_state(force=True)
             # 用户真正开始拖动 = 接管位置决策，撤销"等副屏上线自动恢复"
             # （必须在这里而不是按下时：普通点击/未过阈值/未按 SHIFT 不算接管）
@@ -3415,6 +3451,9 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
                 play_release_sound(self._press_sound_pair, volume)
             if not self._try_open_quick_chat_from_bubble(g):
                 self._on_click()
+                if not probe_click and not self.click_show_self_talk:
+                    kind = "head" if event.position().y() < self.height() * 0.42 else "poke"
+                    companion_feedback_mod.show_touch(self, kind)
         self._dragging = False
         self._interaction_state = "IDLE"
         self._press_global = None
@@ -3429,6 +3468,8 @@ class PetWindow(QWidget, WindowFeatureGateMixin):
         # 松手后重算让路闸门：左键已释放，若点击动画仍在播放则继续保持持有
         self._update_interaction_hold()
         self._effects_on_release(was_dragging)
+        if was_dragging:
+            companion_feedback_mod.show_touch(self, "drop")
         event.accept()
 
     def _clear_just_dragged(self) -> None:
