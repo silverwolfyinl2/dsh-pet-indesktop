@@ -906,6 +906,7 @@ def test_modern_context_menu_has_compact_semantic_groups(monkeypatch):
     ]
     if sys.platform == "win32":
         expected_labels.append("主动识屏")  # 仅 Windows + 有聊天能力时显示
+    expected_labels.append("扩展市场")  # 2026-10-27 本机加的（模板 ext_market，平台无关）
     expected_labels.append("待办提醒")  # 待办管理面板入口（所有平台）
     expected_labels.append("免打扰")    # 免打扰入口（#208，四档时长子菜单）
     if sys.platform == "win32":

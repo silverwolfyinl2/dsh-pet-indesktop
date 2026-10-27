@@ -615,6 +615,14 @@ FEATURES: dict[str, FeatureSpec] = {
     ),
 }
 
+# 注（2026-10-27 升级记录）：本机加的两个右键菜单动作 `game_assistant` / `ext_market`
+# **不登记成 FeatureSpec**。理由：上游 `MIGRATION_BASELINE` 的规矩是「新模块进来时不动它」
+# （老用户升级不该被静默塞新功能），而 `test_freeze_for_settings_process_reads_global_config`
+# 又要求「未判定的安装 ⇒ FEATURES 全部激活」——两条同时成立的前提是
+# `MIGRATION_BASELINE == FEATURES.keys()`。往里塞一个就会二选一地破坏其中一条。
+# 这两个入口在本 fork 里是**常驻核心动作**（没有停用态），所以按上游守卫给的
+# 第二条路走：登记进 `CORE_MENU_ACTION_IDS`（见 tests/test_feature_modules_gating.py）。
+
 
 #: 迁移基线：老用户升级时继承的模块全集（**写死**，不随 `FEATURES` 增长）。
 #:

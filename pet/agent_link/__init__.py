@@ -3401,11 +3401,14 @@ class AgentLinkManager(SceneBubbleMixin, QObject):
             mon.normalized_event.connect(self._on_normalized_event)
             mon.state_event.connect(self._on_agent_state_event)
             mon.activity_event.connect(self._on_agent_activity_event)
-        try:
-            mon.scene_action.connect(self._on_scene_action)
-            mon.scene_bubble.connect(self._on_scene_bubble)
-        except Exception:                                                              # noqa: BLE001
-            log.debug("scene_action 信号连接失败", exc_info=True)
+            # ★ 2026-10-15 自建信道：必须在**循环内**逐个 mon 连（2026-10-27 升级时
+            #   曾把 try 写在循环外，导致下面 approval/question/… 全掉进 except 分支、
+            #   一个都没连上，test_agent_link 直接红 19 条）。
+            try:
+                mon.scene_action.connect(self._on_scene_action)
+                mon.scene_bubble.connect(self._on_scene_bubble)
+            except Exception:                                                          # noqa: BLE001
+                log.debug("scene_action 信号连接失败", exc_info=True)
             mon.approval_requested.connect(self._on_approval_request)
             mon.approval_resolved.connect(self._on_approval_resolved)
             mon.question_requested.connect(self._on_question_request)

@@ -2310,6 +2310,11 @@ CORE_MENU_ACTION_IDS = frozenset({
     "deepseek_web", "drag_physics", "edge_probe", "github_project", "golden_spin",
     "hide_pet", "modern_settings", "no_move", "ojingjing", "on_top", "playback_speed",
     "quark_download", "quiet_mode", "quit", "return_corner", "size", "spawn_pet",
+    # 2026-10-27（本机改造）：游戏助理 / 扩展市场两个入口在本 fork 里是常驻核心动作，
+    # 没有停用态。**不**登记成 features 模块的理由见 pet/features.py 末尾那段注：
+    # MIGRATION_BASELINE 的「新模块不动它」与「未判定安装 FEATURES 全激活」互相约束，
+    # 加一个 FeatureSpec 必然踩其中一条。
+    "game_assistant", "ext_market",
 })
 
 
