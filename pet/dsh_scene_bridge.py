@@ -199,13 +199,31 @@ class SceneBubbleMixin:
     def _on_scene_action(self, agent_key: str, name: str) -> None:
         """★ 2026-10-15：执行**慢通道点名**的动作（监视器线程发信号 → 这里在主线程调窗口）。
 
-        监视器（worker 线程）没有 `self.win` 引用，动作必须由持有窗口的这里执行；
-        名字非法时 `play_scene_action` 返回 False 且不改当前动画。
+        监视器（worker 线程）没有 `self.win` 引用，动作必须由持有窗口的这里执行。
+
+        ★ 2026-10-27 升级后补第二条路：上游 v4.4.0 换成 overlay 架构，
+        `self.win` 常是 `MultiWindowProxy` → 落到 overlay 宿主时
+        `play_scene_action` 的 `self.idles/acts/...` 池子是空的（实测
+        `[SCENE] 已播=False anim=?`），但上游自己提供了 `request_link_anim(name)`
+        —— Agent 联动的一次性动作入口，overlay 侧已实现。所以：
+        先走我们的池内校验版；它说不播（False）就回落上游接口。
         """
         ok = False
         try:
-            ok = bool(self.win.play_scene_action(name))
+            fn = getattr(self.win, "play_scene_action", None)
+            if callable(fn):
+                ok = bool(fn(name))
         except Exception:                                                                  # noqa: BLE001
             log.debug("play_scene_action 失败：%r", name, exc_info=True)
+        if not ok:
+            try:
+                fn2 = getattr(self.win, "request_link_anim", None)
+                if callable(fn2):
+                    fn2(name)                      # 上游接口无返回值：投递成功即算
+                    ok = True
+                    log.info("[SCENE] 回落上游 request_link_anim：%r", name)
+            except Exception:                                                             # noqa: BLE001
+                log.debug("request_link_anim 失败：%r", name, exc_info=True)
+                ok = False
         log.info("[SCENE] agent=%s action=%r 已播=%s anim=%s",
                  agent_key, name, ok, getattr(self.win, "anim", "?"))
