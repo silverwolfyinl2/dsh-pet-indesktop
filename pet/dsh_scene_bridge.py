@@ -155,10 +155,21 @@ class SceneBubbleMixin:
                                          sticky=sticky, busy=busy, retries_left=retries_left)
         if verdict == "show":
             try:
-                win.show_bubble(text, duration_ms=external_bubble_duration_ms(text))
-                log.info("[BUBBLE] shown agent=%s len=%d", agent_key, len(text))
+                # 上游 v4.4.0 起 show_bubble 返回 bool（是否真上屏）；旧版返回 None。
+                # 2026-10-27 升级实测：不接返回值时日志写 shown 而屏幕其实没有——
+                # 与 E7（僵尸设置进程压气泡）同一类假象，必须按返回值判定。
+                ok = win.show_bubble(text, duration_ms=external_bubble_duration_ms(text))
+                shown = True if ok is None else bool(ok)      # None = 旧版签名，按旧语义认
+                if shown:
+                    log.info("[BUBBLE] shown agent=%s len=%d host=%s ret=%r",
+                             agent_key, len(text), type(win).__name__, ok)
+                else:
+                    log.info("[BUBBLE] dropped reason=not-on-screen agent=%s len=%d "
+                             "host=%s ret=%r visible=%s alert=%s suppressed=%s sticky=%s",
+                             agent_key, len(text), type(win).__name__, ok, visible, alert_active,
+                             bool(getattr(win, "_bubble_suppressed", False)), sticky)
             except Exception:                                                              # noqa: BLE001
-                log.info("[BUBBLE] dropped reason=show_bubble-error")
+                log.info("[BUBBLE] dropped reason=show_bubble-error", exc_info=True)
             return
         if verdict == "island":
             ok = False
