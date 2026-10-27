@@ -39,8 +39,8 @@ from urllib.parse import unquote
 
 from PySide6.QtCore import QCoreApplication, QObject, QTimer, Signal
 from PySide6.QtWidgets import QMessageBox
-from .dsh_scene_bridge import (                      # 2026-10-27：场景气泡/动作已抽到独立模块
-    SceneBubbleMixin,
+from ..dsh_scene_bridge import (                     # 2026-10-27：场景气泡/动作已抽到独立模块
+    SceneBubbleMixin,                                  # （agent_link 现在是包，模块在 pet/ 下一层）
     _external_bubble_enabled,
     external_bubble_duration_ms,
     external_bubble_policy,
