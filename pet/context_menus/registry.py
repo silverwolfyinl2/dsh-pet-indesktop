@@ -14,8 +14,6 @@ from ..config import DEFAULT_MENU_EASTER_EGG
 from .fun_entry import add_ojingjing_entry
 from .icons import custom_file_menu_icon, vector_menu_icon
 from .quick_launch import add_quick_launch_menu, configured_quick_apps
-from .game_assistant import add_game_assistant_menu  # 本机追加
-from .ext_market import add_ext_market_menu          # 本机追加（2026-10-27 扩展市场）
 from .shared import (
     QUARK_PAN_URL,
     REPO_URL,
@@ -68,10 +66,6 @@ ACTION_LABELS = {
     "music_lyric_align": "歌词对齐",
     "agent_cost": "显示本轮消费",
     "quick_launch": "快捷启动", "balance": "DeepSeek 余额",
-    "game_assistant": "游戏助理",
-    "ext_market": "扩展市场",
-    "ga_ai_ops": "AI 操作", "ga_ai_advice": "AI 建议",
-    "ga_ai_laptop": "AI 操作笔记本", "ga_ai_record": "AI 记录", "ga_voice": "语音播报",
     "harness": "启动 DeepSeek Harness", "deepseek_web": "打开网页版 DeepSeek",
     "check_update": "检查更新", "github_project": "GitHub 项目页",
     "quark_download": "夸克网盘下载", "agent_link": "Agent 联动",
@@ -97,9 +91,6 @@ ACTION_ICONS = {
     "music": "play", "music_pause": "pause", "music_open_netease": "play",
     "music_open_qqmusic": "play", "music_lyric_align": "play",
     "quick_launch": "application", "balance": "balance", "harness": "harness",
-    "game_assistant": "automation", "ext_market": "web", "ga_ai_ops": "interaction", "ga_ai_advice": "chat",
-    "learn_mouse": "screen",
-    "ga_ai_laptop": "application", "ga_ai_record": "screen", "ga_voice": "chat",
     "deepseek_web": "web", "check_update": "update", "github_project": "web",
     "quark_download": "download", "agent_link": "automation",
     "proactive_screen": "screen", "todo_panel": "todo",
@@ -298,8 +289,6 @@ class MenuActionRegistry:
             "check_update": MenuActionSpec(_build_check_update, _callback_available("on_check_update")),
             "github_project": MenuActionSpec(_build_github),
             "quark_download": MenuActionSpec(_build_quark, lambda _pet: sys.platform == "win32"),
-            "game_assistant": MenuActionSpec(add_game_assistant_menu),
-            "ext_market": MenuActionSpec(add_ext_market_menu),
             "agent_link": MenuActionSpec(add_agent_link_menu),
             "proactive_screen": MenuActionSpec(
                 add_proactive_menu,
@@ -424,3 +413,18 @@ class MenuActionRegistry:
 
 
 MENU_ACTIONS = MenuActionRegistry()
+
+
+# ── 本机扩展菜单（**唯一侵入点**，2026-10-27）────────────────────────────────
+# 条目在 pet/context_menus/_local_menus.py：加菜单改那里，不动本文件的三张表。
+# 上游升级时冲突只会落在这几行（全在文件末尾），解起来最快。
+try:
+    from ._local_menus import install_local_menus as _install_local_menus
+
+    _install_local_menus(ACTION_LABELS, ACTION_ICONS, MENU_ACTIONS._specs, MenuActionSpec)
+except Exception as _local_menu_exc:                     # noqa: BLE001
+    import logging as _logging
+
+    _logging.getLogger("pet.menu").warning(
+        "本机扩展菜单未加载（桌宠可启动，但菜单会少几项）：%s", _local_menu_exc
+    )
