@@ -412,6 +412,7 @@ mouth_peak 0.9731 / mouth_valley 0.0`。T-305 尺寸四档截图（`.tmp/t305/si
 | HEAD 基线对照 | `.tmp/head-baseline`（93c9adb 纯净树）`pytest tests/test_memory_recall.py::test_manual_pin_remember_topic_unarchives -q` | **1 failed in 2.58 s** ⇒ 该红在基线就存在，**不是本批引入** |
 | 断言有效性（变异） | `.tmp/t309/mutate_t309.py` + `mutation-20261108.log`（M1–M4 各注入一处缺陷后重跑） | **4/4 命中**：M1→2 红、M2→2 红、M3→2 红、M4→1 红；还原后 sha 逐字节回原值，再跑 **22 passed**（当时用例数） |
 | 全量 | `pytest -v`（实际收集 **9162** 例；`QT_QPA_PLATFORM=offscreen`，日志 `.tmp/t309/full-verbose-1848.log`） | **14 failed / 9116 passed / 32 skipped in 1700.16 s（28:20）**，2026-11-08 18:37–19:05 低谷期跑；14 条逐条归因见下（本批引入 1 条 = 灵动岛停靠细条测试未同步，已同步并复跑 20 passed） |
+| 全量·最终合并门 | 同上（`pytest -v` 直重定向；日志 `.tmp/t309/full-final-merge-2036.log`，实际收集 **9166** 例） | **12 failed / 9122 passed / 32 skipped in 1851.73 s（30:51）**，2026-11-08 20:34:43–21:05:35（低谷期）；红集 = A(9)+B(1)+D(1)+E(1)，**零新增红**（C 跨分钟假红未复现、F 已修绿；收集数 9166 = 首轮 9162 + 20:00 补的 4 例冻帧用例） |
 | 灵动岛停靠细条同步（全量暴露） | `pytest tests/test_island_bevel_fade.py -q` | 修前 **1 failed**（`test_docked_strip_has_no_bevel`：旧断言在 (35,8) 取整条底板，新设计短标外全透明）；同步到 T-20261107-303 形态后 **20 passed** in 9.37 s（exit 0） |
 | 架构红线 | `pytest tests/test_architecture.py` | 本批未单独跑（未新增/恢复任何被退役模块） |
 | 报告纪律（20:40 补丁后） | `.venv311\Scripts\python.exe -m pytest tests/test_pr_report_discipline.py -q` | **233 passed** in 3.10 s（exit 0，2026-11-08 20:39；本轮只改报告/HANDOFF/INDEX，产品代码零改动） |
@@ -442,8 +443,10 @@ mouth_peak 0.9731 / mouth_valley 0.0`。T-305 尺寸四档截图（`.tmp/t305/si
 
 1. **全量套件已跑（2026-11-08 18:37–19:05 补，续接会话）**：**14 failed / 9116 passed / 32 skipped in 28:20**，逐条归因见 §六
    （本批引入 1 条 = 灵动岛停靠细条测试未同步，已同步测试并复跑 20 passed）。踩坑记录：`pytest -q | Tee-Object` 在后台管道里
-   两次「假死」（输出背压，日志分别止于 14%/18%、进程 CPU 停滞），改用 `pytest -v | Out-File` 一次跑通；全量占约 28 分钟 CPU，
-   合并前仍需在目标环境跑一次（本机 2 条红是环境依赖：`omegaconf` 未装 / SAPI5 合成失败）。
+   两次「假死」（输出背压，日志分别止于 14%/18%、进程 CPU 停滞），改用 `pytest -v | Out-File` 一次跑通；全量占约 28–31 分钟 CPU。
+   **合并/推送前全量门已闭合**：2026-11-08 20:34:43–21:05:35 在最终树复跑 **12 failed / 9122 passed / 32 skipped in 30:51**
+   （日志 `.tmp/t309/full-final-merge-2036.log`，实际收集 9166 例），红集只有 A(9)+B(1)+D(1)+E(1) 四组既存/环境红，
+   **本批零新增红**（C 组跨分钟假红本轮未复现、F 组已修绿）。
 2. ~~**用户可见验收未做**~~ **已完成（2026-11-08 19:25–19:29，部署态）**：旧进程 27580 / 32148（2026-11-07 20:06 的 webm 旧代码）
    已结束，新实例 PID 45156 → 45668 于 19:25:34 启动；Live2D 开窗 / 运行页 ready / 慢通道动作→「爱心眼 + 举手」/ 气泡 均实测可见（§5.6）。
    仍无法自动验证的只剩**秋殇的肉眼观感**（角色边缘 / 动作连贯 / 色差），本报告只用像素与状态代理。
