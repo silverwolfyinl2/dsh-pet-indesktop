@@ -58,7 +58,7 @@ CORNER_MARGIN = 24  # 距屏幕右缘的默认间距
 HEAD_FALLBACK_RATIO = 0.45
 
 # 可选的显示缩放档位（相对 640 宽：320px / 462px / 544px / 640px）
-SCALE_STEPS = (0.5, 0.72, 0.85, 1.0)
+SCALE_STEPS = (0.5, 0.72, 0.85, 1.0, 1.5)
 
 # ---------------------------------------------------------------- 多形象
 # 当前内置形象与未来扩展形象 ID（目录名建议使用稳定 ASCII）
@@ -202,6 +202,9 @@ def external_character_dirs() -> list[Path]:
     """外部可扩展形象根目录（不存在时返回空列表，不报错）。
 
     顺序：
+    0. ``PET_PACK_DIR`` 环境变量（角色包安装根覆盖；与
+       ``character_packs_page.characters_root()`` 同一口径，否则「装到哪」
+       与「切角色时扫哪」分裂，装好的包不出现在列表里）
     1. exe 同目录 / 当前工作目录下的 characters/
     2. 打包变体数据目录下的 characters/（变体感知，如 dsh-pet-standalone-webm-chat）
     3. 旧目录 dsh-pet-standalone/characters/（兼容老用户已在旧目录放置的角色）
@@ -210,6 +213,11 @@ def external_character_dirs() -> list[Path]:
     ``from . import catalog`` 构成循环依赖）。
     """
     dirs: list[Path] = []
+    # 本机补丁 2026-11-07（T-285）：PET_PACK_DIR 进发现链，排在最前。
+    # 只装不认是本机的真缺陷：设置页按它安装、切换角色却只扫 cwd/数据目录。
+    override = os.environ.get('PET_PACK_DIR', '').strip()
+    if override:
+        dirs.append(Path(override).expanduser())
     if getattr(sys, 'frozen', False):
         base = Path(sys.executable).resolve().parent
     else:
@@ -222,7 +230,18 @@ def external_character_dirs() -> list[Path]:
     # 非变体旧目录兜底：老用户已放入的角色不能因为变体拆分而丢
     if app_dir_name != 'dsh-pet-standalone':
         dirs.extend(_data_character_dirs('dsh-pet-standalone'))
-    return dirs
+    # 去重保序：PET_PACK_DIR 可能与上面某个根重合，重复扫同一目录会让
+    # list_available_characters 的 seen 集合白设一遍（无害但浪费），
+    # 且 `dirs.count(base) == 1` 这条既有断言必须继续成立。
+    uniq: list[Path] = []
+    seen_dirs: set[str] = set()
+    for d in dirs:
+        key = os.path.normcase(os.path.abspath(str(d)))
+        if key in seen_dirs:
+            continue
+        seen_dirs.add(key)
+        uniq.append(d)
+    return uniq
 
 
 def _pack_version_key(folder: Path) -> tuple:

@@ -3849,8 +3849,39 @@ class AppShell:
         if inst is not None and callable(getattr(inst, "open_modern_settings", None)):
             inst.open_modern_settings()
 
+    def _perform_reply(self, text: str) -> None:
+        """把一轮回复的表演指令落到主宠身上（T-306 P2a）。
+
+        **为什么是这里**：全进程没有第二个「完整回复 + 能摸到 sprite」的地方。
+        原文在 ``ChatService._finished``（那里已剥标签、把指令投进单槽信箱），
+        sprite 归 ``OverlayShell`` 管（``_make_default_sprite`` 造的代理），本回调
+        是两者唯一的交汇点，且在 GUI 线程（``service.py:50`` 的注释钉死了这一点）。
+
+        纪律：表演层出任何事都**不许**影响说话与灵动岛 —— 全程 try 包住，只记日志。
+        """
+        try:
+            from . import performance
+
+            commands = performance.take_commands()
+            shell = getattr(self, "_overlay_shell", None)
+            if shell is None:
+                return
+            performer = performance.performer_for(shell)
+            if commands:
+                results = performer.perform(commands)
+                logging.info("表演层：%d 条指令 %s -> %s",
+                             len(commands), [c[0] for c in commands], results)
+            # 口型跟台词：桌宠不可见时不动（脸上没人看，只白烧 JS 往返）。
+            if performer.supports_live2d() and self._aggregate_pet_visible():
+                performer.speak(text)
+        except Exception:  # noqa: BLE001 - 表演层坏掉不许打断对话
+            logging.exception("表演层执行失败（已忽略）")
+
     def _on_global_chat_finished(self, text: str) -> None:
-        """ChatService 全局完成回调（GUI 线程）：驱动灵动岛事件动效。"""
+        """ChatService 全局完成回调（GUI 线程）：驱动灵动岛事件动效 + 表演层。"""
+        # T-306 P2a：表演指令必须在**任何早退之前**落地。下面岛为空的早退是常态
+        # （精简装配/无聊天变体），把表演挂在它后面等于「岛没建起来就永远不动脸」。
+        self._perform_reply(text)
         island = getattr(self, "island", None)
         if island is None or not shiboken6.isValid(island):
             return

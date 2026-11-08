@@ -141,11 +141,35 @@ class ChatService(QObject):
         if self._current(rid): self.activity.emit(rid,kind,text)
     def _finished(self,rid,text):
         if self._current(rid):
+            text = self._strip_performance(text)
             self.finished.emit(rid,text)
             for cb in list(type(self)._global_finished_listeners):
                 try: cb(text)
                 except Exception: pass
             self._maybe_extract_memory(text)
+    @staticmethod
+    def _strip_performance(text):
+        """摘掉回复里的表演标签（T-306 P2a），指令投进 performance 的单槽信箱。
+
+        为什么是**这里**：``_finished`` 是全进程唯一「完整回复原文还在、谁都还没看见」
+        的瞬间。``self.finished.emit`` 之后聊天窗会把原文上屏并落盘
+        （``widgets.py:2470→2495``），``register_global_finished`` 的监听方拿到的是
+        同一份字符串——在任何一个下游点剥标签都**已经晚了**（标签已经进会话存档）。
+        插在这里，三个入口（完整聊天窗 / 快速对话 / 灵动岛对话）一次覆盖。
+
+        解析器是纯函数、失败绝不吞话：出现任何异常都原样返回文本。
+        """
+        try:
+            from .. import performance
+            result = performance.parse_reply(text)
+        except Exception:  # noqa: BLE001 - 表演层坏掉不许影响说话
+            log.exception("表演标签解析失败（已退回原文）")
+            return text
+        try:
+            performance.stash_commands(result.commands)
+        except Exception:  # noqa: BLE001
+            log.debug("表演指令投递失败（忽略）", exc_info=True)
+        return result.text
     def _maybe_extract_memory(self,reply_text):
         # 档 B：回复完成后安排静默记忆提炼；hook 异常绝不抛到对话路径
         hook=self.memory_extract_hook; user_text=self._extract_user_text; config=self._extract_config

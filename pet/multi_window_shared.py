@@ -110,13 +110,22 @@ class MultiWindowProxy:
         return bool(self._visible_windows())
 
     # ---- 呈现扇出（只发给可见窗）----
-    def show_bubble(self, text: str, duration_ms: int = 4500) -> None:
+    def show_bubble(self, text: str, duration_ms: int = 4500) -> bool:
         # 联动气泡只发首个可见窗（与 show_alert 同策）：多窗同弹一条过程汇报
         # 既吵又重复，单窗展示即可；隐藏窗不弹的语义保持不变。
+        #
+        # 2026-10-29 本地修（game-copilot）：原来恒返回 None，而
+        # agent_link/dsh_scene_bridge.py:162 的判定是 `shown = True if ok is None
+        # else bool(ok)` ⇒ **没有可见窗也记 `[BUBBLE] shown`**，10-27 事故
+        # 「日志说显示了、屏幕上没有」正是这条。现在如实返回：
+        #   有窗且窗返回 False（不可见/被压制/提醒占位）→ False
+        #   一个可见窗都没有 → False
+        #   窗是旧签名返回 None → True（按旧语义认，不改变老窗行为）
         for w in self._visible_windows():
             if hasattr(w, "show_bubble"):
-                w.show_bubble(text, duration_ms=duration_ms)
-                return
+                r = w.show_bubble(text, duration_ms=duration_ms)
+                return True if r is None else bool(r)
+        return False
 
     # ---- 提醒扇出（交互式提醒：审批/问题/控制级 Watchdog）----
     def show_alert(self, text: str, *, subtitle: str = "", duration_ms: int = 0,
@@ -228,10 +237,22 @@ class MultiWindowProxy:
         # 聚合视图：任一窗提醒队列非空即视为激活（_show_link_bubble 据此让路）。
         return any(getattr(w, "_alert_queue", None) for w in self._windows())
 
-    def request_link_anim(self, name: str) -> None:
+    def request_link_anim(self, name: str) -> bool | None:
+        """联动动作扇出。返回值是**聚合视图**，供 ``dsh_scene_bridge`` 如实记日志：
+
+        * 任一窗返回 True（Live2D 表演已投递）⇒ True
+        * 全部窗都返回 False（都明确 no-op）⇒ False
+        * 其余（有窗走 webm 无返回值）⇒ None（上游旧口径 = 投递）
+        """
+        results: list = []
         for w in self._visible_windows():
             if hasattr(w, "request_link_anim"):
-                w.request_link_anim(name)
+                results.append(w.request_link_anim(name))
+        if any(r is True for r in results):
+            return True
+        if results and all(r is False for r in results):
+            return False
+        return None
 
     def request_link_idle(self) -> None:
         for w in self._visible_windows():

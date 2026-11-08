@@ -5,6 +5,20 @@ from pathlib import Path
 from .models import ChatMessage, ChatSettings
 from .memory_recall import augment_for_turn
 
+
+def performance_prompt_block() -> str:
+    """表演标签白名单（单一真源在 ``pet/performance.py``）。
+
+    只为「无表演层也能跑」而包一层：纯桌宠/无聊天变体里 performance 一定在
+    （零 Qt 依赖），但代价极低的兜底能保证 prompt 组装永远不因它失败。
+    """
+    try:
+        from .. import performance
+        return performance.prompt_block()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def load_character_manifest(root:Path,character_id:str):
     try: raw=json.loads((Path(root)/character_id/'manifest.json').read_text(encoding='utf-8'))
     except (OSError,ValueError): return {}
@@ -122,6 +136,15 @@ class PromptBuilder:
         if roleplay_enabled and system.strip():
             system=(system+'\n\n'+roleplay_context(roleplay_scene,roleplay_cast)).strip()
         system=(system+'\n\n'+time_context(history,now)).strip()
+        # T-306 P2a：表演标签白名单（运行时追加，**不改 slowdesk/persona**）。
+        # 位置刻意在 memory_text **之前**：
+        # ① 既有的 test_build_messages_appends_memory_section 钉死「system 以记忆段
+        #    结尾」，挂在后面会把它打破；
+        # ② 记忆/召回是"这一轮的事实"，标签清单是"能力说明"，能力说明放前面读起来
+        #    也是对的（模型先知道能做什么，再看这轮记得什么）。
+        # 注入门槛与 roleplay 引导一致：有效 system prompt 非空才有身份可言。
+        if system.strip():
+            system=(system+'\n\n'+performance_prompt_block()).strip()
         if memory_payload is not None:
             memory_text=memory_payload.text
         memory_text=str(memory_text or '').strip()

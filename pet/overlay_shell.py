@@ -77,6 +77,7 @@ from __future__ import annotations
 import copy
 import logging
 import math
+import os
 import queue
 import sys
 import threading
@@ -136,6 +137,26 @@ from .tick_driver import TickDriver
 
 ENV_TOPOLOGY = overlay_settings_command.ENV_TOPOLOGY
 TOPOLOGY_OVERLAY = overlay_settings_command.TOPOLOGY_OVERLAY
+
+
+def live2d_enabled_by_env(environ=None) -> "bool | None":
+    """``PET_LIVE2D`` 开发期分流的**唯一读点**（T-304 / 报告 §七.7）。
+
+    三态返回值：
+
+    - ``None``：未设置（或空串）→ 交给配置键 ``live2d_sprite``（缺省 True）；
+    - ``False``：显式 ``PET_LIVE2D=0`` → **硬关**，工厂层不进 Live2D 分支；
+    - ``True``：其它非空值 → 显式开。
+
+    旧实现直接判 ``os.environ.get("PET_LIVE2D")`` 的真值 ⇒ 字符串 ``"0"`` 也是真、
+    等于关不掉：文档写「``PET_LIVE2D=0`` 或窗口起不来时拿到 ``PetSprite``」，
+    实现却不认。这里把「谁是关」收成一个纯函数，别再让两处各读一遍环境变量。
+    """
+    env = os.environ if environ is None else environ
+    raw = env.get("PET_LIVE2D")
+    if raw is None or raw == "":
+        return None
+    return raw != "0"
 
 # 联动动作链里「一次性动作正在播」（window.py _is_one_shot_playing 的 sprite 等价物）：
 # 动作池 / 点击回应 / 移动三类都不可被打断，联动请求排进待播槽。
@@ -526,18 +547,22 @@ class _SpriteServicePresenter(_SpritePetHost):
         return bool(self._shell._show_bubble_text_for(
             self._sprite, str(text), int(duration_ms), **kwargs))
 
-    def request_link_anim(self, name: str) -> None:
+    def request_link_anim(self, name: str) -> bool | None:
         """余额档位动画的落点（仅主 sprite 有等价链）。
 
         子 sprite 没有联动动作控制器，静默跳过——把动画播在主肥鱼身上等于"点了子肥鱼
         却让主肥鱼转圈"，比不播更不像话。消费方（``_show_balance_payload``）本就对该
         属性有 ``hasattr`` 守卫，不缺这条也能跑。
+
+        返回值透传给 :meth:`OverlayShell.request_link_anim`（T-20261108-309）：
+        True/False/None 的语义见那里；子 sprite 一律 ``None``（没参与，不算失败）。
         """
         if self._sprite is not self._shell.sprite:
-            return
+            return None
         fn = getattr(self._shell, "request_link_anim", None)
         if callable(fn):
-            fn(name)
+            return fn(name)
+        return None
 
 
 class _SpriteSelfTalkHost:
@@ -1103,7 +1128,7 @@ class OverlayShell(QObject):
             and _fa.is_active("cross_screen")
         )
         self._sprite_factory = sprite_factory or (
-            lambda lib, pos, scale: PetSprite(lib, pos=pos, scale=scale))
+            lambda lib, pos, scale: self._make_default_sprite(lib, pos, scale))
         self._started = False
         self._session_end_done = False
         # 音效预热一次性 latch：只在首次 start、overlay 可见前预热一次
@@ -3688,15 +3713,39 @@ class OverlayShell(QObject):
             logging.debug("overlay: 切换动画失败 %s", name, exc_info=True)
             return False
 
-    def request_link_anim(self, name: str) -> None:
-        """Agent 联动动作请求：一次性动作播放中不打断，存为待播（最新覆盖旧的）。"""
+    def request_link_anim(self, name: str) -> bool | None:
+        """Agent 联动动作请求：一次性动作播放中不打断，存为待播（最新覆盖旧的）。
+
+        ★ T-20261108-309「Live2D 动作接慢通道」：目标 sprite 是 Live2D 代理时
+        **先走表演层**（``play_scene_action``：素材名/关键词 → 情绪 → 表情+动作）。
+        旧路径最终落到 ``Live2DSprite.bind_clip``，那是个 no-op —— 慢通道点名的
+        「舞狮头」「写代码」在 Live2D 上等于没发生，日志却记投递成功。
+
+        返回值（供 ``dsh_scene_bridge`` 如实记日志）：
+          True  = Live2D 表演已投递（JS 已送；真播用页面账本取证）
+          False = 目标是 Live2D 但名字映射不出来（**不进 webm 链**，no-op 要能看见）
+          None  = webm 路径（沿用上游"无返回值 = 投递"口径）
+        """
         self.mark_activity()
         name = str(name or "")
         if not name:
-            return
+            return None
+        target = self.alert_target_sprite()
+        player = getattr(target, "play_scene_action", None)
+        if callable(player):
+            try:
+                if player(name):
+                    self._pending_link_anim = None
+                    self._link_anim_current = name
+                    return True
+            except Exception:  # noqa: BLE001 - 表演层坏掉不许打断联动链
+                logging.debug("overlay: Live2D 慢通道动作失败 %r", name, exc_info=True)
+            logging.info("overlay: Live2D 慢通道动作 %r 无法映射（no-op，不进 webm 链）", name)
+            return False
         self._pending_link_anim = name
         if not self._link_anim_busy():
             self._play_pending_link_anim()
+        return None
 
     def _play_pending_link_anim(self) -> None:
         name, self._pending_link_anim = self._pending_link_anim, None
@@ -4016,16 +4065,82 @@ class OverlayShell(QObject):
         # M5f：音乐自动唱歌轮询（可见即按开关恢复；隐藏期间保持停止）
         self.sync_music_sing()
 
+    # ---------------------------------------------------------------- Live2D（T-304）
+    def _make_default_sprite(self, lib, pos, scale):
+        """默认 sprite 工厂：Live2D 开着就换**代理**，否则原路 webm。
+
+        T-304 / D2：Live2D 跑在自己的无边框透明窗里，喂给引擎的只是代理对象
+        （协议全满足、自己什么也不画，见 ``pet/live2d_sprite.py``）。开窗失败
+        **必须**能退回 ``PetSprite``——渲染层不该把整只宠拖没。
+        开关：配置键 ``live2d_sprite``（缺省 True，见 ``pet/config.py``）或环境变量
+        ``PET_LIVE2D``（开发期分流：``0`` = 硬关，未设 = 交给配置）。
+
+        T-305 两条硬约束：
+
+        1. **必须把 ``scale`` 传下去**。``acquire()`` 是按 scale 算窗口尺寸的
+           （``640*scale × 390*scale``）；不传就是恒 520×760，跟宠物的几何完全
+           脱钩——那是 T-304 留下的硬缺陷。
+        2. **只有主宠（slot 0）走 Live2D**。单张窗实测 +861 MiB 显存，小肥鱼
+           每只再开一张就把 8 G 卡打爆；``Live2DRenderer`` 那边另有窗口数上限
+           兜底，但这里按身份先分流，行为更可预期。
+        """
+        slot = getattr(self, "_cur_build_slot", 0)
+        if slot != 0:
+            logging.info("overlay: slot-%s 是子肥鱼，角色层走 webm（不占 Live2D 显存）",
+                         slot)
+            return PetSprite(lib, pos=pos, scale=scale)
+        env_switch = live2d_enabled_by_env()
+        want_live2d = (self._config.get("live2d_sprite", True)
+                       if env_switch is None else env_switch)
+        if want_live2d:
+            try:
+                from . import live2d_sprite as _l2d
+
+                window = _l2d.Live2DRenderer.instance().acquire(scale=scale)
+                if window is not None:
+                    return _l2d.Live2DSprite(lib, pos=pos, scale=scale, window=window)
+                logging.info("overlay: Live2D 无可用窗（上限/起不来），主宠退回 webm")
+            except Exception:  # noqa: BLE001 - 起不来就退回 webm，不许把宠拖没
+                logging.exception("Live2D 开窗失败，退回 webm 角色层")
+        return PetSprite(lib, pos=pos, scale=scale)
+
+    def _render_toggle_targets(self) -> list:
+        """显隐要通知到的 sprite：**主宠 + 全部子宠**。
+
+        T-304 只遍历 ``_spawned``（当时 Live2D 只在探针里跑过）；T-305 主宠默认走
+        Live2D 之后，漏掉 ``self.sprite`` 就等于主宠那张窗永远不停表——D8「不可见
+        停渲染」直接失效。子宠现在走 webm，没有 ``set_render_enabled``，``getattr``
+        取不到就跳过（同一循环兼容两条路径）。
+        """
+        out = []
+        main = getattr(self, "sprite", None)
+        if main is not None:
+            out.append(main)
+        for each in getattr(self, "_spawned", ()) or ():
+            if each is not None and each is not main:
+                out.append(each)
+        return out
+
     def _show_all_hosts(self) -> None:
         """全部宿主窗口显示 + 起播（整组显隐的唯一入口；进程级驱动器共享）。"""
         for host in self._hosts:
             host.overlay.show()
             host.overlay.start()
+        # T-304/T-305：Live2D 独立窗跟着整组显隐走（显示 = 续表，D8「不可见停渲染」）
+        for each in self._render_toggle_targets():
+            resume = getattr(each, "set_render_enabled", None)
+            if callable(resume):
+                resume(True)
 
     def _hide_all_hosts(self) -> None:
         """全部宿主窗口隐藏（整窗显隐/全屏避让；与 ``_show_all_hosts`` 成对）。"""
         for host in self._hosts:
             host.overlay.hide()
+        # T-304 / D8 必做项：宿主藏了就必须停表，否则 Chromium 照旧每帧重绘。
+        for each in self._render_toggle_targets():
+            pause = getattr(each, "set_render_enabled", None)
+            if callable(pause):
+                pause(False)
 
     def _any_host_visible(self) -> bool:
         """是否至少有一张宿主窗口在屏上（整组显隐的判据）。"""
@@ -5357,6 +5472,10 @@ class OverlayShell(QObject):
         if source is not target_host:
             source.overlay.remove_sprite(sprite, release_clip=False)
             target_host.overlay.add_sprite(sprite)
+            # T-304：跨屏换宿主 = 全局原点变了，Live2D 窗要重新挂到新窗上
+            bind_overlay = getattr(sprite, "bind_overlay", None)
+            if callable(bind_overlay):
+                bind_overlay(target_host.overlay)
         sprite.set_pos(local)
         target_host.apply_activity(sprite)
         sprite.home_screen = target_host.screen
@@ -5674,7 +5793,15 @@ class OverlayShell(QObject):
         # 都按目标宿主取，不能一律塞进主宿主。
         target_host = self.host_for_screen(pet_screen) or self._main_host
         try:
-            sprite = self._sprite_factory(lib, QPointF(0, 0), scale)
+            # T-305：把 slot 身份交给 sprite 工厂——主宠（0）才允许上 Live2D。
+            # 工厂签名保持 (lib, pos, scale) 不变（大量测试注入三参 lambda），
+            # 故用一次性上下文标记，出口必还原。
+            _prev_slot = getattr(self, "_cur_build_slot", 0)
+            self._cur_build_slot = slot
+            try:
+                sprite = self._sprite_factory(lib, QPointF(0, 0), scale)
+            finally:
+                self._cur_build_slot = _prev_slot
             sprite.home_screen = pet_screen
             awaiting = self._awaiting_screen_name(state)
             if awaiting:
@@ -5695,6 +5822,10 @@ class OverlayShell(QObject):
             sprite.facing = facing
         target_host.overlay.add_sprite(sprite)
         target_host.apply_activity(sprite)
+        # T-304：Live2D 代理要知道自己画在哪个全局原点（独立窗按全局坐标摆放）
+        bind_overlay = getattr(sprite, "bind_overlay", None)
+        if callable(bind_overlay):
+            bind_overlay(target_host.overlay)
         # O3：新 sprite 的播放节拍按**当前有效可播性**初始化——PetSprite 默认
         # 未暂停，隐藏/挂起期生成的子宠若不在这里压住，行为链一起播就按帧率
         # 解码，而窗口根本没有像素要上屏。``visible`` 不动（它逻辑上仍是可见

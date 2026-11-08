@@ -802,7 +802,14 @@ def test_payload_wins_over_memory_text_without_duplicate_injection(tmp_path):
 
 
 def test_build_messages_without_payload_is_byte_identical():
-    """B 硬约束：未传 memory_payload 时输出与改动前逐字节一致（固定输入）。"""
+    """B 硬约束：未传 memory_payload 时输出与「无记忆」逐字节一致（固定输入）。
+
+    T-20261108-306 起 system 里多了一段**表演标签白名单**（P2a：让 AI 能操作 Live2D），
+    所以这条从"与改动前逐字节一致"改成"与「人设 + 时间 + 白名单」逐字节一致"：
+    段位与顺序都钉死，白名单正文从 ``performance.prompt_block()`` 取（不复制副本）。
+    """
+    from pet.performance import prompt_block
+
     now = datetime(2026, 10, 21, 12, 0).astimezone()
     history = [
         ChatMessage("user", "上一条", created_at=(now - timedelta(minutes=5)).isoformat(),
@@ -820,7 +827,8 @@ def test_build_messages_without_payload_is_byte_identical():
                 "【时间信息】当前时间：2026-10-21 周三 12:00。对话记录中用户消息开头的"
                 "「[日期 时间]」是系统自动附加的发送时间，用来帮助你感知时间的流逝"
                 "（例如隔了多久没聊、现在是白天还是深夜、日期是否变了），回复时自然地"
-                "体现即可；不要在回复中复述或模仿这种时间标记。"
+                "体现即可；不要在回复中复述或模仿这种时间标记。\n\n"
+                + prompt_block()
             ),
         },
         {"role": "user", "content": "[2026-10-21 周三 11:55] 上一条"},

@@ -22,6 +22,9 @@ from .music import players as music_players
 
 
 DEFAULT_ANIMATION_GAP_SECONDS = 0.0
+#: T-305：Live2D 角色层默认**开**（主宠走 Live2D 代理，小肥鱼仍走 webm）。
+#: 用户显式写 ``"live2d_sprite": false`` 就关；缺键时按 True 走，见 ``get``。
+DEFAULT_LIVE2D_SPRITE = True
 DEFAULT_SELF_TALK_MIN_INTERVAL = 20.0
 DEFAULT_SELF_TALK_MAX_INTERVAL = 60.0
 DEFAULT_SELF_TALK_DURATION_SECONDS = 3.2
@@ -2163,6 +2166,13 @@ class Config:
         self.data.update(_clean_collision_data(self.data))
 
     def get(self, key, default=None):
+        """取配置项。``live2d_sprite`` 的缺省是 ``True``（T-305 主宠默认开）。
+
+        只在这一个键上补缺省、不写回磁盘：用户没表达过意见时按"开"跑，显式写
+        ``false`` 才算关——避免为了一个默认值去改写用户的 config.json。
+        """
+        if key == "live2d_sprite" and default is None:
+            default = DEFAULT_LIVE2D_SPRITE
         return self.data.get(key, default)
 
     def character_alias(self, character_id: str) -> str:

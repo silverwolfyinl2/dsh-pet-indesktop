@@ -149,7 +149,6 @@ def _sync_all_switches() -> None:
     """勾选后立刻同步一轮（主机 ↔ 笔记本）。失败只记日志，绝不拦住勾选。"""
     try:
         import subprocess
-        import sys as _sys
         tool = os.path.join(HOME, "tools", "switches_sync.py")
         if not os.path.exists(tool):
             return

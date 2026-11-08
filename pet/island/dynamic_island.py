@@ -60,6 +60,12 @@ _EDGE_MARGIN = 16
 _DOCK_THRESHOLD = 40
 _STRIP_THICKNESS = 16
 _STRIP_SIDE = 64  # 左右停靠时竖条的长度
+#: 上下停靠时留下的**强调色短标**宽度（T-20261107-303）。
+#: 细条宽度 = 胶囊自然宽（实测 669px），过去整条铺主题底色 alpha≈210，在深壁纸上
+#: 就是屏幕顶部一条 669×16 的不透明黑边：既看不出是灵动岛，又不透明像素会拦下顶部
+#: 一带的点击。短标只占中央这一段，其余像素保持全透明（分层窗口 alpha=0 处不参与
+#: 命中测试，鼠标直接穿透），窗口本体的几何/交互一概不动。
+_STRIP_STUB_W = 96
 #: 胶囊投影三层：(两侧内收 px, 底边下伸 px, 纯黑 alpha)。
 #: 单层"整块下移 2px"既做不出近实远虚的落影，底缘也只剩一条硬边。三层一律
 #: **两侧内收、只向下长**——窗口高只有 44（胶囊 y=6..38），左右余量已被
@@ -3844,8 +3850,29 @@ class DynamicIsland(QWidget):
         return QRectF(cx - w / 2.0, cy - h / 2.0, w, h), h / 2.0
 
     def _paint_strip(self, painter: QPainter) -> None:
-        """停靠细条：圆角条 + 靠屏侧主题色亮线 + 状态点（竖条加图标）。"""
+        """停靠细条：靠屏侧主题色短标（上下停靠）/ 圆角竖条 + 图标 + 状态点（左右停靠）。
+
+        **上下停靠不再画整条底色**（T-20261107-303）：细条宽度 = 胶囊自然宽
+        （实测 669px），整条铺主题底色 alpha≈210 就是屏幕顶部一条 669×16 的
+        不透明黑边——看不出是灵动岛，还拦下顶部一带的点击。现在只在中央画
+        :data:`_STRIP_STUB_W` 宽、2px 高的强调色短标，其余像素保持全透明；
+        窗口几何、hover 滑出、单击展开、碰撞结算全走原路，一个都不动。
+        """
         rect = QRectF(0, 0, self.width(), self.height())
+        edge = self.dock_edge
+        accent = QColor(self._accent_color())
+        accent.setAlpha(220)
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        if edge in ("top", "bottom"):
+            stub_w = min(float(_STRIP_STUB_W), max(0.0, rect.width() - 12.0))
+            if stub_w > 0:
+                y = 0.0 if edge == "top" else rect.height() - 2.0
+                painter.setBrush(accent)
+                painter.drawRoundedRect(
+                    QRectF((rect.width() - stub_w) / 2.0, y, stub_w, 2), 1, 1)
+            return
+
         radius = min(rect.width(), rect.height()) / 2.0
         background, primary, _secondary = self._style_palette()
         opacity = self._opacity()
@@ -3854,20 +3881,12 @@ class DynamicIsland(QWidget):
             base.setAlpha(min(255, round(210 * opacity)))
         else:
             base = QColor(255, 255, 255, round(210 * opacity))
-        painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(base)
         painter.drawRoundedRect(rect, radius, radius)
 
         # 靠屏一侧的 2px 亮线（深壁纸上也能一眼找到细条）
-        accent = QColor(self._accent_color())
-        accent.setAlpha(220)
         painter.setBrush(accent)
-        edge = self.dock_edge
-        if edge == "top":
-            painter.drawRoundedRect(QRectF(6, 0, rect.width() - 12, 2), 1, 1)
-        elif edge == "bottom":
-            painter.drawRoundedRect(QRectF(6, rect.height() - 2, rect.width() - 12, 2), 1, 1)
-        elif edge == "left":
+        if edge == "left":
             painter.drawRoundedRect(QRectF(0, 6, 2, rect.height() - 12), 1, 1)
         elif edge == "right":
             painter.drawRoundedRect(QRectF(rect.width() - 2, 6, 2, rect.height() - 12), 1, 1)
@@ -3893,10 +3912,6 @@ class DynamicIsland(QWidget):
                 painter.setPen(Qt.PenStyle.NoPen)
             self._paint_status_dot(painter, QRectF(
                 (rect.width() - dot_size) / 2, rect.height() - dot_size - 8,
-                dot_size, dot_size))
-        else:
-            self._paint_status_dot(painter, QRectF(
-                (rect.width() - dot_size) / 2, (rect.height() - dot_size) / 2,
                 dot_size, dot_size))
 
     # ------------------------------------------------------------ 软陶笔/淡化

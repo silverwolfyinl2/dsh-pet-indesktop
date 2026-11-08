@@ -348,7 +348,7 @@ def test_bevel_follows_squish_deformation(tmp_path):
 
 
 def test_docked_strip_has_no_bevel(tmp_path):
-    """停靠细条不画软陶笔：细条是另一种图元语言，保持现状（同岛自由态作对照）。"""
+    """停靠细条不画软陶笔：T-20261107-303 起只画中央 2px 强调色短标（其余全透明）。"""
     _qapp()
     island = _island(tmp_path, dock_edge="bottom")
     island.show()
@@ -357,11 +357,17 @@ def test_docked_strip_has_no_bevel(tmp_path):
         assert island._mode == "docked" and not island._hover_peek
         frame = _render(island)
         assert frame.height() == 16, "前提：停靠细条"
-        fill = frame.pixelColor(35, 8)
-        assert fill.alpha() > 0, "前提：细条底板画出来了"
-        for row in (0, 1):
-            assert frame.pixelColor(35, row) == fill, (
-                f"细条第 {row} 行必须与底板同色（不画高光）")
+        # T-20261107-303：上下停靠不再铺整条底板（深壁纸上是不透明黑边，还会拦下
+        # 顶部一带的点击），只在靠屏侧画中央 2px 强调色短标，短标之外保持全透明。
+        # 「不画软陶笔」的等价断言 = 短标两行同色（没有高光/阴影行）。
+        cx = island.width() // 2
+        top_row = frame.pixelColor(cx, frame.height() - 2)
+        bottom_row = frame.pixelColor(cx, frame.height() - 1)
+        assert top_row.alpha() > 0, "前提：中央短标画出来了"
+        assert top_row == bottom_row, (
+            f"短标两行必须同色（不画高光/阴影）：{top_row.name()} vs {bottom_row.name()}")
+        assert frame.pixelColor(35, 8).alpha() == 0, (
+            "短标之外必须全透明（旧版整条底板会拦顶部点击）")
 
         # 对照：同一个岛回到自由胶囊态，顶部内缘就要有笔（否则上面的断言是空话）
         island._mode = "normal"

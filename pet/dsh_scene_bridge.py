@@ -209,21 +209,42 @@ class SceneBubbleMixin:
         先走我们的池内校验版；它说不播（False）就回落上游接口。
         """
         ok = False
+        how = "none"
         try:
             fn = getattr(self.win, "play_scene_action", None)
             if callable(fn):
                 ok = bool(fn(name))
+                how = "pool" if ok else "pool-miss"
         except Exception:                                                                  # noqa: BLE001
             log.debug("play_scene_action 失败：%r", name, exc_info=True)
         if not ok:
             try:
                 fn2 = getattr(self.win, "request_link_anim", None)
                 if callable(fn2):
-                    fn2(name)                      # 上游接口无返回值：投递成功即算
-                    ok = True
-                    log.info("[SCENE] 回落上游 request_link_anim：%r", name)
+                    sent = fn2(name)          # True=Live2D 已投递 / None=webm 仅投递 / False=明确 no-op
+                    if sent is False:
+                        # ★ T-20261108-309：Live2D 下映射不出来 ⇒ **明确 no-op**。
+                        # 旧代码在这里一律记 ok=True（"投递成功"），屏幕没动日志却说播了。
+                        how = "live2d-miss"
+                        ok = False
+                        log.info("[SCENE] Live2D 无对应动作：%r（no-op）", name)
+                    else:
+                        ok = True
+                        how = "live2d-sent" if sent is True else "upstream-queued"
+                        log.info("[SCENE] 回落上游 request_link_anim：%r sent=%s", name, sent)
             except Exception:                                                             # noqa: BLE001
                 log.debug("request_link_anim 失败：%r", name, exc_info=True)
                 ok = False
-        log.info("[SCENE] agent=%s action=%r 已播=%s anim=%s",
-                 agent_key, name, ok, getattr(self.win, "anim", "?"))
+                how = "upstream-error"
+        # 2026-10-29 改（角色层重做）：原文写 `已播=%s`，但 upstream-queued 那条路
+        # 只是**投递**成功（request_link_anim 返回 None，动作还可能被排在待播里），
+        # 旧日志把它和"池内真播"混成同一个 已播=True，`anim=?` 就是证据 ——
+        # 上层据此判"动作播了"属于自欺。现在拆成两个词：
+        #   played=True  = 池内直接播（可信）
+        #   sent=True    = 只投递到上游（**未确认播放**，要视觉验证）
+        # 2026-11-08 补第三态：Live2D 的 sent=True 是"表态/动作已送到运行页"，
+        # 真播的取证口是页面账本（``Live2DSprite.scene_action_evidence``）。
+        log.info("[SCENE] agent=%s action=%r played=%s sent=%s via=%s anim=%s",
+                 agent_key, name, how == "pool",
+                 how in ("upstream-queued", "live2d-sent"), how,
+                 getattr(self.win, "anim", "?"))
